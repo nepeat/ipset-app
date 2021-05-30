@@ -9,6 +9,7 @@ from sanic import Sanic, response
 
 app = Sanic("ipset-app")
 log = logging.getLogger(__name__)
+KEY_EXPIRE_TIME = 60 * 60 * 24 * 7  # one week
 
 @app.listener("before_server_start")
 async def setup_redis(app, loop):
@@ -19,9 +20,33 @@ async def cleanup_redis(app, loop):
     app.redis.close()
     await app.redis.wait_closed()
 
+
+async def check_redis(key: str) -> bool:
+    return await app.redis.exists(key)
+
+
+async def check_vault(key: str) -> bool:
+    return False
+
+
+CHECK_METHODS = [
+    check_redis,
+]
+
+
 async def test_punch_key(key: str) -> bool:
-    key_exists = await app.redis.exists("ipset:" + key)
-    return key_exists or key == "6e65ede4-75ea-4703-b264-abfe15dd9638"
+    check_key = "ipset:" + key
+
+    for check_method in CHECK_METHODS:
+        key_exists = await check_method(check_key)
+        if key_exists:
+            break
+
+    # Renew the key if the key exists.
+    if key_exists:
+        await app.redis.expire(check_key, KEY_EXPIRE_TIME)
+
+    return key_exists
 
 
 async def punch_hole(set_name: str, ip: str, timeout: Optional[int] = None) -> bool:
